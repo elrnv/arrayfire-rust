@@ -391,6 +391,17 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<(String,
             backends.push(("forge".to_string(), LibKind::Dynamic));
         }
         if ocl_lib_kind == LibKind::Static {
+            backends.push(("clblast".to_string(), LibKind::Static));
+            backend_dirs.push(
+                build_dir
+                    .join("third_party")
+                    .join("CLBlast")
+                    .join("lib")
+                    .to_str()
+                    .to_owned()
+                    .unwrap()
+                    .to_string(),
+            );
             backends.push(("clFFT".to_string(), LibKind::Static));
             backend_dirs.push(
                 build_dir
