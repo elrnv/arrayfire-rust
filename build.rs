@@ -385,6 +385,32 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<(String,
             uni_lib_kind.or_else(|| backend_kind(&lib_dir.join(unilib_name).to_string_lossy()));
     }
 
+    if let Some(ocl_lib_kind) = ocl_lib_kind {
+        backends.push(("afopencl".to_string(), ocl_lib_kind));
+        if !conf.use_lib && conf.with_graphics == "ON" {
+            backends.push(("forge".to_string(), LibKind::Dynamic));
+        }
+        if ocl_lib_kind == LibKind::Static {
+            backends.push(("clFFT".to_string(), LibKind::Static));
+            backend_dirs.push(
+                build_dir
+                    .join("third_party")
+                    .join("clFFT")
+                    .join("lib")
+                    .join("import")
+                    .to_str()
+                    .to_owned()
+                    .unwrap()
+                    .to_string(),
+            );
+            if cfg!(target_os = "macos") {
+                backends.push(("c++".to_string(), LibKind::Dynamic));
+            } else {
+                backends.push(("stdc++".to_string(), LibKind::Dynamic));
+            }
+        }
+    }
+
     if !conf.use_lib {
         // blob in cuda deps
         if cud_lib_kind.is_some() {
@@ -442,20 +468,6 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<(String,
                         .unwrap()
                         .to_string(),
                 );
-            }
-        }
-    }
-
-    if let Some(uni_lib_kind) = uni_lib_kind {
-        backends.push(("af".to_string(), uni_lib_kind));
-        if !conf.use_lib && conf.with_graphics == "ON" {
-            backends.push(("forge".to_string(), uni_lib_kind));
-        }
-        if uni_lib_kind == LibKind::Static {
-            if cfg!(target_os = "macos") {
-                backends.push(("c++".to_string(), LibKind::Dynamic));
-            } else {
-                backends.push(("stdc++".to_string(), LibKind::Dynamic));
             }
         }
     }
