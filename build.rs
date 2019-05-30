@@ -39,6 +39,7 @@ struct Config {
     build_nonfree: String,
     build_examples: String,
     build_test: String,
+    build_docs: String,
 
     with_intelmkl: String,
     with_imageio: String,
@@ -166,6 +167,12 @@ fn prep_cmake_options(conf: &Config) -> Vec<String> {
         }
         _ => fail("Invalid value for build_test option"),
     };
+    match conf.build_docs.as_ref() {
+        "ON" | "OFF" => {
+            options.push(format!("-DAF_BUILD_DOCS:BOOL={}", conf.build_docs));
+        }
+        _ => fail("Invalid value for build_docs option"),
+    };
     match conf.with_intelmkl.as_ref() {
         "ON" | "OFF" => {
             options.push(format!("-DUSE_CPU_MKL:BOOL={0}", conf.with_intelmkl));
@@ -274,17 +281,40 @@ fn run_cmake_command(conf: &Config, build_dir: &std::path::PathBuf) {
     );
 }
 
-fn backend_exists(name: &str) -> bool {
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum LibKind {
+    Dynamic,
+    Static,
+}
+
+impl std::fmt::Display for LibKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            LibKind::Dynamic => write!(f, "dylib"),
+            LibKind::Static => write!(f, "static"),
+        }
+    }
+}
+
+fn backend_kind(name: &str) -> Option<LibKind> {
     let win_backend = name.to_string() + ".dll";
     let osx_backend = name.to_string() + ".dylib";
     let linux_backend = name.to_string() + ".so";
 
-    return file_exists(&win_backend) || file_exists(&osx_backend) || file_exists(&linux_backend);
+    let unix_static_backend = name.to_string() + ".a";
+
+    if file_exists(&win_backend) || file_exists(&osx_backend) || file_exists(&linux_backend) {
+        Some(LibKind::Dynamic)
+    } else if file_exists(&unix_static_backend) {
+        Some(LibKind::Static)
+    } else {
+        None
+    }
 }
 
-fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<String>, Vec<String>) {
+fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<(String, LibKind)>, Vec<String>) {
     let mut backend_dirs: Vec<String> = Vec::new();
-    let mut backends: Vec<String> = Vec::new();
+    let mut backends: Vec<(String, LibKind)> = Vec::new();
 
     if conf.use_lib {
         let afpath = match env::var("AF_PATH") {
@@ -325,9 +355,9 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<String>,
         );
     }
 
-    let mut uni_lib_exists = false;
-    let mut cud_lib_exists = false;
-    let mut ocl_lib_exists = false;
+    let mut uni_lib_kind = None;
+    let mut cud_lib_kind = None;
+    let mut ocl_lib_kind = None;
 
     for backend_dir in backend_dirs.iter() {
         let lib_dir = PathBuf::from(backend_dir);
@@ -337,27 +367,27 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<String>,
         } else {
             UNIX_CUDA_LIB
         };
-        cud_lib_exists =
-            cud_lib_exists || backend_exists(&lib_dir.join(culib_name).to_string_lossy());
+        cud_lib_kind =
+            cud_lib_kind.or_else(|| backend_kind(&lib_dir.join(culib_name).to_string_lossy()));
         let ocllib_name = if cfg!(windows) {
             WIN_OCL_LIB
         } else {
             UNIX_OCL_LIB
         };
-        ocl_lib_exists =
-            ocl_lib_exists || backend_exists(&lib_dir.join(ocllib_name).to_string_lossy());
+        ocl_lib_kind =
+            ocl_lib_kind.or_else(|| backend_kind(&lib_dir.join(ocllib_name).to_string_lossy()));
         let unilib_name = if cfg!(windows) {
             WIN_UNI_LIB
         } else {
             UNIX_UNI_LIB
         };
-        uni_lib_exists =
-            uni_lib_exists || backend_exists(&lib_dir.join(unilib_name).to_string_lossy());
+        uni_lib_kind =
+            uni_lib_kind.or_else(|| backend_kind(&lib_dir.join(unilib_name).to_string_lossy()));
     }
 
     if !conf.use_lib {
         // blob in cuda deps
-        if cud_lib_exists {
+        if cud_lib_kind.is_some() {
             if cfg!(windows) {
                 backend_dirs.push(format!("{}\\lib\\x64", conf.win_cuda_sdk));
             } else {
@@ -374,9 +404,9 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<String>,
         }
 
         //blob in opencl deps
-        if ocl_lib_exists {
+        if ocl_lib_kind.is_some() {
             if !cfg!(target_os = "macos") {
-                backends.push("OpenCL".to_string());
+                backends.push(("OpenCL".to_string(), LibKind::Dynamic));
             }
             if cfg!(windows) {
                 let sdk_dir = format!("{}\\lib\\x64", conf.win_opencl_sdk);
@@ -390,7 +420,12 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<String>,
                 if dir_exists(&sdk_dir) {
                     backend_dirs.push(sdk_dir);
                 } else {
-                    backend_dirs.push(format!("{}/{}", conf.lnx_opencl_sdk, "lib"));
+                    let sdk_dir = format!("{}/lib/x86_64", conf.lnx_opencl_sdk);
+                    if dir_exists(&sdk_dir) {
+                        backend_dirs.push(sdk_dir);
+                    } else {
+                        backend_dirs.push(format!("{}/{}", conf.lnx_opencl_sdk, "lib"));
+                    }
                 }
             }
         }
@@ -411,10 +446,17 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<String>,
         }
     }
 
-    if uni_lib_exists {
-        backends.push("af".to_string());
+    if let Some(uni_lib_kind) = uni_lib_kind {
+        backends.push(("af".to_string(), uni_lib_kind));
         if !conf.use_lib && conf.with_graphics == "ON" {
-            backends.push("forge".to_string());
+            backends.push(("forge".to_string(), uni_lib_kind));
+        }
+        if uni_lib_kind == LibKind::Static {
+            if cfg!(target_os = "macos") {
+                backends.push(("c++".to_string(), LibKind::Dynamic));
+            } else {
+                backends.push(("stdc++".to_string(), LibKind::Dynamic));
+            }
         }
     }
 
@@ -435,8 +477,8 @@ fn main() {
     }
 
     let (backends, backend_dirs) = blob_backends(&conf, &build_dir);
-    for backend in backends.iter() {
-        println!("cargo:rustc-link-lib=dylib={}", backend);
+    for (backend, backend_kind) in backends.iter() {
+        println!("cargo:rustc-link-lib={}={}", backend_kind, backend);
     }
     for backend_dir in backend_dirs.iter() {
         println!("cargo:rustc-link-search=native={}", backend_dir);

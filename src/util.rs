@@ -608,11 +608,13 @@ impl Zero for Complex32 {
     }
 }
 
-///Trait qualifier to accept either real or complex typed data
+/// Trait qualifier to accept either real or complex typed data
 pub trait FloatingPoint {
+    /// Determine if this is a number on the real line.
     fn is_real() -> bool {
         false
     }
+    /// Determine if this is a complex number.
     fn is_complex() -> bool {
         false
     }
