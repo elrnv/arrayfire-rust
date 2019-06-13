@@ -285,6 +285,7 @@ fn run_cmake_command(conf: &Config, build_dir: &std::path::PathBuf) {
 enum LibKind {
     Dynamic,
     Static,
+    Framework,
 }
 
 impl std::fmt::Display for LibKind {
@@ -292,6 +293,7 @@ impl std::fmt::Display for LibKind {
         match *self {
             LibKind::Dynamic => write!(f, "dylib"),
             LibKind::Static => write!(f, "static"),
+            LibKind::Framework => write!(f, "framework"),
         }
     }
 }
@@ -442,7 +444,9 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<(String,
 
         //blob in opencl deps
         if ocl_lib_kind.is_some() {
-            if !cfg!(target_os = "macos") {
+            if cfg!(target_os = "macos") {
+                backends.push(("OpenCL".to_string(), LibKind::Framework));
+            } else {
                 backends.push(("OpenCL".to_string(), LibKind::Dynamic));
             }
             if cfg!(windows) {
@@ -452,7 +456,7 @@ fn blob_backends(conf: &Config, build_dir: &std::path::PathBuf) -> (Vec<(String,
                 } else {
                     backend_dirs.push(format!("{}\\lib\\x86_64", conf.win_opencl_sdk));
                 }
-            } else {
+            } else if cfg!(target_os = "linux") {
                 let sdk_dir = format!("{}/{}", conf.lnx_opencl_sdk, "lib64");
                 if dir_exists(&sdk_dir) {
                     backend_dirs.push(sdk_dir);
